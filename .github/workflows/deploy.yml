@@ -2,32 +2,51 @@ name: Node.js CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   pull_request:
-    branches:
-      - main
+    branches: [ main ]
+  schedule:
+    - cron: "0 */6 * * *"  # This cron expression runs the workflow every 6 hours
+  workflow_dispatch:  # This allows you to manually trigger the workflow
 
 jobs:
-  build:
-
+  build-and-start:
     runs-on: ubuntu-latest
 
-    strategy:
-      matrix:
-        node-version: [20.x]
-
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-
-    - name: Set up Node.js
+    - uses: actions/checkout@v3
+    
+    - name: Use Node.js 20
       uses: actions/setup-node@v3
       with:
-        node-version: ${{ matrix.node-version }}
-
+        node-version: '20'
+        
     - name: Install dependencies
-      run: npm install
+      run: npm install || yarn install --network-concurrency 1
+      
+    - name: Set start time
+      id: start-time
+      run: echo "START_TIME=$(date +%s)" >> $GITHUB_ENV
 
     - name: Start application
-      run: npm start
+      run: |
+        echo "Running application..."
+        npm start &
+        APP_PID=$!
+        
+        # Monitor the runtime and kill the process if it exceeds 6 hours
+        while true; do
+          CURRENT_TIME=$(date +%s)
+          ELAPSED_TIME=$(($CURRENT_TIME - $START_TIME))
+          MAX_TIME=21600 # 6 hours in seconds
+          if [ $ELAPSED_TIME -ge $MAX_TIME ]; then
+            echo "6 hours have passed. Restarting the workflow..."
+            kill $APP_PID
+            exit 1
+          fi
+          sleep 60 # Check every minute
+        done
+    - name: Check if application needs to restart
+      if: failure()
+      run: |
+        echo "The application exceeded 6 hours of runtime and was terminated. The workflow will restart in the next schedule."
